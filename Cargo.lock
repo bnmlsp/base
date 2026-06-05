@@ -3403,6 +3403,8 @@ dependencies = [
  "base-builder-core",
  "base-builder-metering",
  "base-bundles",
+ "base-cli-utils",
+ "base-execution-cli",
  "base-node-core",
  "clap",
  "eyre",

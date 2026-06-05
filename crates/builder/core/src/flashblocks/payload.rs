@@ -297,7 +297,7 @@ where
             state_provider = Box::new(CachedStateProvider::new(
                 state_provider,
                 execution_cache.cache().clone(),
-                CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder),
+                Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
             ));
         }
         let db = StateProviderDatabase::new(state_provider);
@@ -730,13 +730,11 @@ where
             .set(payload_transaction_simulation_time);
 
         let total_block_built_duration = Instant::now();
-        let prev_flashblock_id = self.previous_flashblock_id();
         // Divergence from reth: every flashblock batch assembles an intermediate payload from the
         // same in-progress state. Final state-root calculation remains deferred to
         // `FlashblocksBlockBuilder::finish` after the loop exits.
         let prev_flashblock_id = self.previous_flashblock_id();
-        let build_result =
-            block_builder.build_payload(ctx, ctx.attributes().no_tx_pool, prev_flashblock_id);
+        let build_result = block_builder.build_payload(ctx, false, prev_flashblock_id);
         let total_block_built_duration = total_block_built_duration.elapsed();
         BuilderMetrics::total_block_built_duration().record(total_block_built_duration);
         BuilderMetrics::total_block_built_gauge().set(total_block_built_duration);
