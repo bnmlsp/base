@@ -34,7 +34,8 @@ impl ZkProver for DryRunZkProver {
     }
 
     async fn download(&self, backend_session_id: &str) -> Result<ProofResult, ZkProverError> {
-        let zk_proof = ZkProofResult { zk_vm: ZkVm::Sp1, proof: Vec::new().into() };
+        let zk_proof =
+            ZkProofResult { zk_vm: ZkVm::Sp1, proof: Vec::new().into(), execution_stats: None };
 
         if backend_session_id.starts_with(DRY_RUN_SNARK_PREFIX) {
             Ok(ProofResult::SnarkGroth16(SnarkGroth16ProofResult { proof: zk_proof }))

@@ -7,9 +7,10 @@ use alloy_primitives::B256;
 use alloy_provider::RootProvider;
 use base_common_network::Base;
 use base_optimism_rpc::OptimismRollupProviderExt;
-use base_zk_client::{
-    ExecutionStats, GetProofRequest, ProofJobStatus, ProofType, ProveBlockRequest, ReceiptType,
-    ZkProofClient, ZkProofClientConfig,
+use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
+use base_prover_service_protocol::{
+    ExecutionStats, GetProofRequest, ProofRequest, ProofRequestKind, ProofResult, ProofStatus,
+    ProveBlockRangeRequest, ZkProofRequest, ZkVm,
 };
 use eyre::{Result, WrapErr, ensure};
 use tokio::time::{sleep, timeout};
@@ -109,21 +110,24 @@ impl ZkProofBench {
             .checked_sub(1)
             .ok_or_else(|| eyre::eyre!("cannot prove genesis block with one-block range"))?;
         let number_of_blocks_to_prove = last_block_number - first_block_number + 1;
-        let client = ZkProofClient::new(&ZkProofClientConfig {
-            endpoint: prover_url,
-            connect_timeout: Duration::from_secs(10),
-            request_timeout: Duration::from_secs(30),
-        })?;
+        let client = ProofRequesterClient::connect(
+            &ProverServiceClientConfig::new(prover_url.to_string())
+                .with_request_timeout(Duration::from_secs(30)),
+        )?;
+        let session_id = format!("b20-zk-proving-{}", nanoid::nanoid!(10));
         let response = client
-            .prove_block(ProveBlockRequest {
-                start_block_number,
-                number_of_blocks_to_prove,
-                sequence_window: None,
-                proof_type: ProofType::Compressed.into(),
-                session_id: None,
-                prover_address: None,
-                l1_head: Some(l1_head.to_string()),
-                intermediate_root_interval: None,
+            .prove_block_range(ProveBlockRangeRequest {
+                proof: ProofRequest {
+                    session_id,
+                    request: ProofRequestKind::Compressed(ZkProofRequest {
+                        start_block_number,
+                        number_of_blocks_to_prove,
+                        sequence_window: None,
+                        l1_head: Some(l1_head),
+                        intermediate_root_interval: None,
+                        zk_vm: ZkVm::Sp1,
+                    }),
+                },
             })
             .await?;
 
@@ -144,7 +148,7 @@ impl ZkProofBench {
 
     /// Polls a dry-run proof job until it returns execution stats or times out.
     pub async fn poll_dry_run_stats(
-        client: &ZkProofClient,
+        client: &ProofRequesterClient,
         session_id: String,
         proof_timeout: Duration,
         poll_interval: Duration,
@@ -154,23 +158,13 @@ impl ZkProofBench {
         timeout(proof_timeout, async {
             let start = Instant::now();
             loop {
-                let response = client
-                    .get_proof(GetProofRequest {
-                        session_id: session_id.clone(),
-                        receipt_type: Some(ReceiptType::Stark.into()),
-                    })
-                    .await?;
-                let status = ProofJobStatus::try_from(response.status)
-                    .unwrap_or(ProofJobStatus::Unspecified);
-                display.proof_progress(&status, start.elapsed());
+                let response =
+                    client.get_proof(GetProofRequest { session_id: session_id.clone() }).await?;
+                display.proof_progress(&response.status, start.elapsed());
 
-                match status {
-                    ProofJobStatus::Succeeded => {
-                        return response.execution_stats.ok_or_else(|| {
-                            eyre::eyre!("dry-run prover response did not include execution_stats")
-                        });
-                    }
-                    ProofJobStatus::Failed => {
+                match response.status {
+                    ProofStatus::Succeeded => return Self::dry_run_stats(response.result),
+                    ProofStatus::Failed => {
                         return Err(eyre::eyre!(
                             "proof request failed: {}",
                             response
@@ -184,5 +178,17 @@ impl ZkProofBench {
         })
         .await
         .wrap_err_with(|| format!("timed out waiting for proof request {timeout_session_id}"))?
+    }
+
+    fn dry_run_stats(result: Option<ProofResult>) -> Result<ExecutionStats> {
+        match result {
+            Some(ProofResult::Compressed(proof)) => proof.execution_stats.ok_or_else(|| {
+                eyre::eyre!("dry-run prover response did not include execution_stats")
+            }),
+            Some(other) => Err(eyre::eyre!(
+                "dry-run prover response returned unexpected proof result: {other:?}"
+            )),
+            None => Err(eyre::eyre!("dry-run prover response did not include a proof result")),
+        }
     }
 }

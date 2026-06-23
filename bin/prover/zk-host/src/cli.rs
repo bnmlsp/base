@@ -18,6 +18,7 @@ use base_proof_zk_host::{
 use base_prover_service_client::{ProverServiceClientConfig, ProverWorkerClient};
 use clap::{Parser, ValueEnum};
 use eyre::{WrapErr, eyre};
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 use url::Url;
@@ -57,9 +58,13 @@ struct WorkerArgs {
     #[arg(long, env = "PROVER_WORKER_ID")]
     worker_id: Option<String>,
 
-    /// ZK proof type to claim: `compressed` or `snark_groth16`.
-    #[arg(long, env = "PROOF_TYPE", value_enum, default_value = "compressed")]
-    proof_type: ZkProofTypeArg,
+    /// ZK proof type to claim when PROOF_TYPES is unset: `compressed` or `snark_groth16`.
+    #[arg(long, env = "PROOF_TYPE", value_enum)]
+    proof_type: Option<ZkProofTypeArg>,
+
+    /// Comma-separated ZK proof types to claim: `compressed`, `snark_groth16`.
+    #[arg(long, env = "PROOF_TYPES", value_enum, value_delimiter = ',')]
+    proof_types: Vec<ZkProofTypeArg>,
 
     /// Proving backend to run: `mock`, `dry_run`, `cluster`, or `network`.
     #[arg(long, env = "ZK_BACKEND", value_enum)]
@@ -193,6 +198,21 @@ enum ZkProofTypeArg {
     SnarkGroth16,
 }
 
+impl AsRef<str> for ZkProofTypeArg {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Compressed => "compressed",
+            Self::SnarkGroth16 => "snark_groth16",
+        }
+    }
+}
+
+impl fmt::Display for ZkProofTypeArg {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_ref())
+    }
+}
+
 impl From<ZkProofTypeArg> for ZkProofClaimType {
     fn from(proof_type: ZkProofTypeArg) -> Self {
         match proof_type {
@@ -243,6 +263,21 @@ impl ZkBackendArg {
 }
 
 impl WorkerArgs {
+    fn proof_types(&self) -> Vec<ZkProofTypeArg> {
+        let proof_types = if self.proof_types.is_empty() {
+            vec![self.proof_type.unwrap_or(ZkProofTypeArg::Compressed)]
+        } else {
+            self.proof_types.clone()
+        };
+        let mut deduped = Vec::with_capacity(proof_types.len());
+        for proof_type in proof_types {
+            if !deduped.contains(&proof_type) {
+                deduped.push(proof_type);
+            }
+        }
+        deduped
+    }
+
     fn backend_config(&self) -> eyre::Result<SuccinctZkBackendConfig> {
         match self.backend {
             ZkBackendArg::Mock => Ok(SuccinctZkBackendConfig::Mock),
@@ -333,16 +368,23 @@ impl Cli {
 impl WorkerArgs {
     async fn run(self, cancel: CancellationToken) -> eyre::Result<()> {
         let args = &self;
-        if !args.backend.supports_proof_type(args.proof_type) {
+        let proof_types = args.proof_types();
+        if let Some(unsupported) = proof_types
+            .iter()
+            .copied()
+            .find(|proof_type| !args.backend.supports_proof_type(*proof_type))
+        {
             return Err(eyre!(
-                "ZK_BACKEND={} currently supports PROOF_TYPE=compressed only",
-                args.backend
+                "ZK_BACKEND={} does not support PROOF_TYPE={}",
+                args.backend,
+                unsupported
             ));
         }
-        let proof_type = ZkProofClaimType::from(args.proof_type);
+        let claim_types =
+            proof_types.iter().copied().map(ZkProofClaimType::from).collect::<Vec<_>>();
         info!(
             prover_service_endpoint = %args.prover_service_endpoint,
-            proof_type = ?proof_type,
+            proof_types = ?claim_types,
             backend = %args.backend,
             "initializing zk prover host worker"
         );
@@ -354,7 +396,7 @@ impl WorkerArgs {
             .wrap_err("failed to initialize zk proving backend")?
         else {
             info!(
-                proof_type = ?proof_type,
+                proof_types = ?claim_types,
                 backend = %args.backend,
                 "zk prover host worker initialization cancelled"
             );
@@ -366,7 +408,7 @@ impl WorkerArgs {
         let Some(client) = Self::connect_prover_service_client(&client_config, &cancel).await?
         else {
             info!(
-                proof_type = ?proof_type,
+                proof_types = ?claim_types,
                 backend = %args.backend,
                 "zk prover host worker startup cancelled"
             );
@@ -381,23 +423,33 @@ impl WorkerArgs {
 
         let worker_id =
             args.worker_id.clone().unwrap_or_else(|| format!("zk-host-{}", Uuid::new_v4()));
-        let host_config = ZkHostConfig::sp1(worker_id.clone(), proof_type)
-            .with_job_discovery_poll_interval(Duration::from_millis(
-                args.job_discovery_poll_interval_ms,
-            ))
-            .with_job_discovery_lock_duration_seconds(args.job_discovery_lock_duration_seconds)
-            .with_job_discovery_max_concurrent_jobs(args.job_discovery_max_concurrent_jobs)
-            .with_proof_generator_heartbeat(heartbeat);
-        let host = ZkHost::new(client, prover, host_config);
-
         info!(
             worker_id = %worker_id,
             prover_service_endpoint = %args.prover_service_endpoint,
-            proof_type = ?proof_type,
+            proof_types = ?claim_types,
             backend = %args.backend,
             "starting zk prover host worker"
         );
-        host.run_until_cancelled(cancel).await;
+
+        let mut hosts = JoinSet::new();
+        for proof_type in claim_types {
+            let host_config = ZkHostConfig::sp1(worker_id.clone(), proof_type)
+                .with_job_discovery_poll_interval(Duration::from_millis(
+                    args.job_discovery_poll_interval_ms,
+                ))
+                .with_job_discovery_lock_duration_seconds(args.job_discovery_lock_duration_seconds)
+                .with_job_discovery_max_concurrent_jobs(args.job_discovery_max_concurrent_jobs)
+                .with_proof_generator_heartbeat(heartbeat);
+            let host = ZkHost::new(client.clone(), prover.clone(), host_config);
+            let cancel = cancel.clone();
+            hosts.spawn(async move {
+                host.run_until_cancelled(cancel).await;
+            });
+        }
+
+        while let Some(result) = hosts.join_next().await {
+            result.wrap_err("zk prover host worker task failed")?;
+        }
         Ok(())
     }
 
