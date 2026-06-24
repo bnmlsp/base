@@ -23,7 +23,7 @@ variable "PLATFORM_PAIR" {
 }
 
 variable "DEVNET_TARGETS" {
-  default = ["builder", "consensus", "client", "base", "batcher", "zk-prover"]
+  default = ["base", "batcher", "zk-prover"]
 }
 
 variable "INGRESS_EXTRA_TARGETS" {
