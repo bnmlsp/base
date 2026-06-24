@@ -5,7 +5,8 @@ pub use base_prover_service_protocol::ZkVm;
 
 mod prover;
 pub use prover::{
-    UnimplementedZkProver, ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState,
+    UnimplementedZkProver, ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionRecorder,
+    ZkSessionState,
 };
 
 mod session_handle;

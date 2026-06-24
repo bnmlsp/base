@@ -1,14 +1,15 @@
 //! Mock [`ZkProver`] that produces instant placeholder proofs.
 
 use async_trait::async_trait;
-use base_proof_zk_host::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
-use base_prover_service_protocol::{ProofResult, SnarkGroth16ProofResult, ZkProofResult, ZkVm};
+use base_proof_zk_host::{
+    ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionRecorder, ZkSessionState,
+};
+use base_prover_service_protocol::{
+    BackendSessionState, ProofResult, SessionType, SnarkGroth16ProofResult, ZkProofResult, ZkVm,
+};
 
 /// Placeholder proof bytes returned by the mock prover.
 pub const MOCK_PROOF_BYTES: &[u8] = b"mock-zk-proof";
-
-/// Prefix marking a mock backend session id for a SNARK proof.
-pub const MOCK_SNARK_PREFIX: &str = "mock-snark-";
 
 /// [`ZkProver`] producing instant placeholder proofs without a real backend.
 #[derive(Debug, Clone, Copy, Default)]
@@ -17,7 +18,18 @@ pub struct MockZkProver;
 impl MockZkProver {
     /// Derive the deterministic backend session id for a request.
     pub fn backend_session_id(request: &ZkProofRequestKind, request_session_id: &str) -> String {
-        let session_type = if request.is_snark_groth16() { "snark" } else { "stark" };
+        Self::backend_session_id_for_type(request.initial_session_type(), request_session_id)
+    }
+
+    /// Derive the deterministic backend session id for a stage.
+    pub fn backend_session_id_for_type(
+        session_type: SessionType,
+        request_session_id: &str,
+    ) -> String {
+        let session_type = match session_type {
+            SessionType::Stark => "stark",
+            SessionType::Snark => "snark",
+        };
         format!("mock-{session_type}-{request_session_id}")
     }
 }
@@ -32,14 +44,47 @@ impl ZkProver for MockZkProver {
         Ok(Self::backend_session_id(request, request_session_id))
     }
 
-    async fn poll(&self, _backend_session_id: &str) -> Result<ZkSessionState, ZkProverError> {
+    async fn poll(
+        &self,
+        _session_type: SessionType,
+        _backend_session_id: &str,
+    ) -> Result<ZkSessionState, ZkProverError> {
         Ok(ZkSessionState::Completed)
     }
 
-    async fn download(&self, backend_session_id: &str) -> Result<ProofResult, ZkProverError> {
+    async fn submit_next(
+        &self,
+        request: &ZkProofRequestKind,
+        session_recorder: &(dyn ZkSessionRecorder + Send + Sync),
+        completed_session_type: SessionType,
+        request_session_id: &str,
+        _completed_backend_session_id: &str,
+    ) -> Result<Option<(SessionType, String)>, ZkProverError> {
+        if !request.is_snark_groth16() || completed_session_type != SessionType::Stark {
+            return Ok(None);
+        }
+
+        let backend_session_id =
+            Self::backend_session_id_for_type(SessionType::Snark, request_session_id);
+        session_recorder
+            .record_backend_session(
+                SessionType::Snark,
+                backend_session_id.clone(),
+                BackendSessionState::Running,
+            )
+            .await?;
+
+        Ok(Some((SessionType::Snark, backend_session_id)))
+    }
+
+    async fn download(
+        &self,
+        session_type: SessionType,
+        _backend_session_id: &str,
+    ) -> Result<ProofResult, ZkProverError> {
         let zk_proof = ZkProofResult { zk_vm: ZkVm::Sp1, proof: MOCK_PROOF_BYTES.to_vec().into() };
 
-        if backend_session_id.starts_with(MOCK_SNARK_PREFIX) {
+        if session_type == SessionType::Snark {
             Ok(ProofResult::SnarkGroth16(SnarkGroth16ProofResult { proof: zk_proof }))
         } else {
             Ok(ProofResult::Compressed(zk_proof))
@@ -52,6 +97,20 @@ mod tests {
     use base_prover_service_protocol::{SnarkGroth16ProofRequest, ZkProofRequest, ZkVm};
 
     use super::*;
+
+    struct TestSessionRecorder;
+
+    #[async_trait::async_trait]
+    impl ZkSessionRecorder for TestSessionRecorder {
+        async fn record_backend_session(
+            &self,
+            _session_type: SessionType,
+            _backend_session_id: String,
+            _state: BackendSessionState,
+        ) -> Result<(), ZkProverError> {
+            Ok(())
+        }
+    }
 
     fn zk_request() -> ZkProofRequest {
         ZkProofRequest {
@@ -90,17 +149,31 @@ mod tests {
         let prover = MockZkProver;
         let id = prover.submit(&compressed(), "session-1").await.unwrap();
 
-        assert_eq!(prover.poll(&id).await.unwrap(), ZkSessionState::Completed);
-        assert!(matches!(prover.download(&id).await.unwrap(), ProofResult::Compressed(_)));
+        assert_eq!(prover.poll(SessionType::Stark, &id).await.unwrap(), ZkSessionState::Completed);
+        assert!(matches!(
+            prover.download(SessionType::Stark, &id).await.unwrap(),
+            ProofResult::Compressed(_)
+        ));
     }
 
     #[tokio::test]
-    async fn poll_completes_immediately_and_downloads_snark_groth16() {
+    async fn submit_next_advances_snark_groth16_to_snark_session() {
         let prover = MockZkProver;
-        let id = prover.submit(&snark_groth16(), "session-1").await.unwrap();
+        let request = snark_groth16();
+        let id = prover.submit(&request, "session-1").await.unwrap();
 
-        assert_eq!(id, "mock-snark-session-1");
-        assert_eq!(prover.poll(&id).await.unwrap(), ZkSessionState::Completed);
-        assert!(matches!(prover.download(&id).await.unwrap(), ProofResult::SnarkGroth16(_)));
+        assert_eq!(id, "mock-stark-session-1");
+        assert_eq!(
+            prover
+                .submit_next(&request, &TestSessionRecorder, SessionType::Stark, "session-1", &id)
+                .await
+                .unwrap(),
+            Some((SessionType::Snark, "mock-snark-session-1".to_owned()))
+        );
+        let snark_id = MockZkProver::backend_session_id_for_type(SessionType::Snark, "session-1");
+        assert!(matches!(
+            prover.download(SessionType::Snark, &snark_id).await.unwrap(),
+            ProofResult::SnarkGroth16(_)
+        ));
     }
 }

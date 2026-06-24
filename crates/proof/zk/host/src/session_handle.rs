@@ -6,6 +6,8 @@ use base_prover_service_protocol::{
     SessionType,
 };
 
+use crate::{ZkProverError, ZkSessionRecorder};
+
 /// Tracks the backend session for one claimed proof job via the prover service.
 #[derive(Clone, Debug)]
 pub struct ProofSessionHandle<Client> {
@@ -67,5 +69,23 @@ where
             .await?;
 
         Ok(response.session)
+    }
+}
+
+#[async_trait::async_trait]
+impl<Client> ZkSessionRecorder for ProofSessionHandle<Client>
+where
+    Client: ProverWorkerProvider + Send + Sync,
+{
+    async fn record_backend_session(
+        &self,
+        session_type: SessionType,
+        backend_session_id: String,
+        state: BackendSessionState,
+    ) -> Result<(), ZkProverError> {
+        self.record(session_type, backend_session_id, state)
+            .await
+            .map(|_| ())
+            .map_err(|error| ZkProverError::Session(Box::new(error)))
     }
 }
