@@ -1,0 +1,20 @@
+[package]
+name = "base-grpc-exex"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "gRPC ExEx extension for Base node"
+
+[lints]
+workspace = true
+
+[dependencies]
+reth-remote-exex.workspace = true
+reth-exex.workspace = true
+base-node-runner.workspace = true
+base-common-consensus = { workspace = true, features = ["reth"] }
+tokio.workspace = true
+tracing.workspace = true
