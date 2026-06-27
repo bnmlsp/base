@@ -82,6 +82,8 @@ use reth_trie_parallel::{
     root::{ParallelStateRoot, ParallelStateRootError},
     state_root_task::StateRootComputeOutcome,
 };
+use alloy_rpc_types_trace::geth::CallFrame;
+use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 use revm_primitives::Address;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn};
 
@@ -492,7 +494,7 @@ where
         // Execute the block and handle any execution errors.
         // The receipt root task is spawned before execution and receives receipts incrementally
         // as transactions complete, allowing parallel computation during execution.
-        let (output, senders, receipt_root_rx) =
+        let (output, senders, receipt_root_rx, call_traces) =
             match self.execute_block(state_provider, env, &input, &mut handle) {
                 Ok(output) => output,
                 Err(err) => {
@@ -664,13 +666,14 @@ where
         let changeset_provider =
             ensure_ok_post_block!(overlay_factory.database_provider_ro(), block);
 
-        let executed_block = self.spawn_deferred_trie_task(
+        let mut executed_block = self.spawn_deferred_trie_task(
             Arc::new(block),
             output,
             hashed_state,
             trie_output,
             changeset_provider,
         );
+        executed_block.call_traces = Some(call_traces);
         Ok(ValidationOutput::new(executed_block, None))
     }
 
@@ -723,6 +726,7 @@ where
             BlockExecutionOutput<BaseReceipt>,
             Vec<Address>,
             tokio::sync::oneshot::Receiver<(B256, alloy_primitives::Bloom)>,
+            Vec<CallFrame>,
         ),
         InsertBlockErrorKind,
     >
@@ -748,11 +752,14 @@ where
         let (spec_id, mut executor) = {
             let _span = debug_span!(target: "engine::tree", "create_evm").entered();
             let spec_id = *env.evm_env.spec_id();
+            // `none()` disables opcode/memory/stack recording but still captures the call tree,
+            // which is all that `geth_call_traces` needs.
+            let inspector = TracingInspector::new(TracingInspectorConfig::none());
             let evm: BaseEvm<
                 &mut State<StateProviderDatabase<S>>,
-                revm::inspector::NoOpInspector,
+                TracingInspector,
                 reth_evm::precompiles::PrecompilesMap,
-            > = self.evm_config.evm_with_env(&mut db, env.evm_env);
+            > = self.evm_config.evm_with_env_and_inspector(&mut db, env.evm_env, inspector);
             let ctx =
                 self.execution_ctx_for(input).map_err(|e: <Evm as ConfigureEvm>::Error| {
                     InsertBlockErrorKind::Other(Box::new(e))
@@ -823,8 +830,8 @@ where
 
         let execution_start = Instant::now();
 
-        // Execute all transactions and finalize
-        let (executor, senders) = self.execute_transactions(
+        // Execute all transactions with tracing and finalize
+        let (executor, senders, call_traces) = self.execute_transactions_traced(
             executor,
             transaction_count,
             handle.iter_transactions(),
@@ -851,7 +858,7 @@ where
         self.metrics.record_block_execution_gas_bucket(output.result.gas_used, execution_duration);
 
         debug!(target: "engine::tree::payload_validator", elapsed = ?execution_duration, "Executed block");
-        Ok((output, senders, result_rx))
+        Ok((output, senders, result_rx, call_traces))
     }
 
     /// Executes transactions and collects senders, streaming receipts to a background task.
@@ -863,6 +870,8 @@ where
     /// - Collecting transaction senders for later use
     ///
     /// Returns the executor (for finalization) and the collected senders.
+    // Kept in sync with execute_transactions_traced; retained for upstream merge compatibility.
+    #[allow(dead_code)]
     fn execute_transactions<E, Tx, InnerTx, Err>(
         &self,
         mut executor: E,
@@ -930,6 +939,88 @@ where
         drop(exec_span);
 
         Ok((executor, senders))
+    }
+
+    /// Executes transactions while collecting per-transaction call traces via `TracingInspector`.
+    ///
+    /// After each transaction, extracts the call trace via `geth_call_traces`, then fuses the
+    /// inspector to reset state for the next transaction.
+    fn execute_transactions_traced<E, Tx, InnerTx, Err>(
+        &self,
+        mut executor: E,
+        transaction_count: usize,
+        transactions: impl Iterator<Item = Result<Tx, Err>>,
+        receipt_tx: &crossbeam_channel::Sender<IndexedReceipt<BaseReceipt>>,
+        executed_tx_index: &AtomicUsize,
+    ) -> Result<(E, Vec<Address>, Vec<CallFrame>), BlockExecutionError>
+    where
+        E: BlockExecutor<Receipt = BaseReceipt>,
+        E::Evm: alloy_evm::Evm<Inspector = TracingInspector>,
+        Tx: alloy_evm::block::ExecutableTx<E> + alloy_evm::RecoveredTx<InnerTx>,
+        InnerTx: TxHashRef,
+        Err: core::error::Error + Send + Sync + 'static,
+    {
+        let mut senders = Vec::with_capacity(transaction_count);
+        let mut tx_traces = Vec::with_capacity(transaction_count);
+
+        // Apply pre-execution changes (e.g., beacon root update)
+        let pre_exec_start = Instant::now();
+        debug_span!(target: "engine::tree", "pre_execution")
+            .in_scope(|| executor.apply_pre_execution_changes())?;
+        self.metrics.record_pre_execution(pre_exec_start.elapsed());
+
+        // Discard system call traces from pre-execution
+        executor.evm_mut().inspector_mut().fuse();
+
+        // Execute transactions
+        let exec_span = debug_span!(target: "engine::tree", "execution").entered();
+        let mut transactions = transactions.into_iter();
+        let mut last_sent_len = 0usize;
+        loop {
+            let wait_start = Instant::now();
+            let Some(tx_result) = transactions.next() else { break };
+            self.metrics.record_transaction_wait(wait_start.elapsed());
+
+            let tx = tx_result.map_err(BlockExecutionError::other)?;
+            let tx_signer = *<Tx as alloy_evm::RecoveredTx<InnerTx>>::signer(&tx);
+
+            senders.push(tx_signer);
+
+            let _enter = debug_span!(
+                target: "engine::tree",
+                "execute tx",
+            )
+            .entered();
+            trace!(target: "engine::tree", "Executing transaction");
+
+            let tx_start = Instant::now();
+            let gas_output = executor.execute_transaction(tx)?;
+            self.metrics.record_transaction_execution(tx_start.elapsed());
+
+            // Extract call trace for this transaction
+            let gas_used = gas_output.tx_gas_used();
+            let frame = executor
+                .evm_mut()
+                .inspector_mut()
+                .geth_builder()
+                .geth_call_traces(Default::default(), gas_used);
+            tx_traces.push(frame);
+            executor.evm_mut().inspector_mut().fuse();
+
+            executed_tx_index.store(senders.len(), Ordering::Relaxed);
+
+            let current_len = executor.receipts().len();
+            if current_len > last_sent_len {
+                last_sent_len = current_len;
+                if let Some(receipt) = executor.receipts().last() {
+                    let tx_index = current_len - 1;
+                    let _ = receipt_tx.send(IndexedReceipt::new(tx_index, receipt.clone()));
+                }
+            }
+        }
+        drop(exec_span);
+
+        Ok((executor, senders, tx_traces))
     }
 
     /// Compute state root for the given hashed post state in parallel.
