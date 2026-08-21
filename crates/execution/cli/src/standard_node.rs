@@ -4,6 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use base_bundle_extension::BundleExtension;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
+use base_grpc_exex::GrpcExExExtension;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringResourceLimits};
@@ -396,6 +397,7 @@ impl StandardBaseRethNode {
         };
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.install_ext::<Eip8130RpcExtension>(eip8130_rpc_mode);
+        runner.install_ext::<GrpcExExExtension>(());
         Ok(runner)
     }
 
