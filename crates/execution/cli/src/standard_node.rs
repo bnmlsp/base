@@ -13,6 +13,7 @@ use base_execution_payload_builder::{
 };
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
+use base_grpc_exex::GrpcExExExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
@@ -760,6 +761,7 @@ impl StandardBaseRethNode {
         };
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.install_ext::<Eip8130RpcExtension>(eip8130_rpc_mode);
+        runner.install_ext::<GrpcExExExtension>(());
         Ok(runner)
     }
 

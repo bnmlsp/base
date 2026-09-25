@@ -208,6 +208,7 @@ base-shadow-indexer = { path = "crates/execution/shadow-indexer" }
 base-shadow-indexer-db = { path = "crates/execution/shadow-indexer-db" }
 base-execution-exex = { path = "crates/execution/exex" }
 base-execution-trie = { path = "crates/execution/trie" }
+base-grpc-exex = { path = "crates/execution/grpc-exex" }
 base-txpool-rpc = { path = "crates/execution/txpool-rpc" }
 base-flashblocks = { path = "crates/execution/flashblocks" }
 base-execution-txpool = { path = "crates/execution/txpool" }
@@ -409,6 +410,7 @@ reth-storage-errors = { git = "https://github.com/bnmlsp/reth.git", branch = "de
 reth-ethereum-forks = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.6", default-features = false }
 reth-consensus-common = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.6", default-features = false }
 reth-trie-parallel = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.6" }
+reth-remote-exex = { git = "https://github.com/bnmlsp/reth-remote-exex.git", branch = "feat-base-support", default-features = false, features = ["base"] }
 
 # tokio
 tokio = "1.53.1"
@@ -633,3 +635,6 @@ cargo_metadata = "0.18.1"
 
 # rate limiting
 governor = "0.7"
+
+[patch."https://github.com/bnmlsp/base.git"]
+base-common-consensus = { path = "crates/common/consensus" }
