@@ -9,6 +9,7 @@ services:
       target: base
       args:
         PROFILE: ${PROFILE:-release}
+        CARGO_CHEF_ARGS: --package base-consensus --package base-snapshotter-bin
     restart: unless-stopped
     ports:
       - "8545:8545" # RPC
@@ -30,6 +31,7 @@ services:
       target: base
       args:
         PROFILE: ${PROFILE:-release}
+        CARGO_CHEF_ARGS: --package base-consensus --package base-snapshotter-bin
     restart: unless-stopped
     depends_on:
       - execution
