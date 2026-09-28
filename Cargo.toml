@@ -410,7 +410,7 @@ reth-storage-errors = { git = "https://github.com/bnmlsp/reth.git", branch = "de
 reth-ethereum-forks = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.6", default-features = false }
 reth-consensus-common = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.6", default-features = false }
 reth-trie-parallel = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.6" }
-reth-remote-exex = { git = "https://github.com/bnmlsp/reth-remote-exex.git", branch = "feat-base-support", default-features = false, features = ["base"] }
+reth-remote-exex = { git = "https://github.com/bnmlsp/reth-remote-exex.git", tag = "for_reth_v2.5.2_base_support", default-features = false, features = ["base"] }
 
 # tokio
 tokio = "1.53.1"

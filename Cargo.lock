@@ -18092,7 +18092,7 @@ dependencies = [
 [[package]]
 name = "reth-remote-exex"
 version = "0.1.0"
-source = "git+https://github.com/bnmlsp/reth-remote-exex.git?branch=feat-base-support#5668c769a675a1f9238e3296a51c1e86f2ae28ac"
+source = "git+https://github.com/bnmlsp/reth-remote-exex.git?tag=for_reth_v2.5.2_base_support#966e576ace7b29c7bfcfd50fad34002b48ee0ae0"
 dependencies = [
  "alloy-consensus 2.4.1",
  "alloy-eip2930",
