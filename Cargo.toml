@@ -206,6 +206,7 @@ base-execution-rpc = { path = "crates/execution/rpc" }
 base-metering = { path = "crates/execution/metering" }
 base-node-runner = { path = "crates/execution/runner" }
 base-shadow-indexer = { path = "crates/execution/shadow-indexer" }
+base-grpc-exex = { path = "crates/execution/grpc-exex" }
 base-shadow-indexer-db = { path = "crates/execution/shadow-indexer-db" }
 base-execution-exex = { path = "crates/execution/exex" }
 base-execution-trie = { path = "crates/execution/trie" }
@@ -409,6 +410,7 @@ reth-payload-builder-primitives = { git = "https://github.com/bnmlsp/reth.git", 
 reth-prune-types = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.8", default-features = false }
 reth-stages-types = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.8", default-features = false }
 reth-storage-errors = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.8", default-features = false }
+reth-remote-exex = { git = "https://github.com/bnmlsp/reth-remote-exex.git", branch = "feat-base-support", default-features = false }
 reth-ethereum-forks = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.8", default-features = false }
 reth-consensus-common = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.8", default-features = false }
 reth-trie-parallel = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.8" }
@@ -627,3 +629,6 @@ notify = "8.2"
 
 # rate limiting
 governor = "0.7"
+
+[patch."https://github.com/bnmlsp/base.git"]
+base-common-consensus = { path = "crates/common/consensus" }

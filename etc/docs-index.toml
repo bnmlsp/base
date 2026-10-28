@@ -366,6 +366,10 @@ digest = "7c092292d5"
 summary = "Flashblocks pending-state management: StateProcessor, subscriber, reconciler, the staleness invariant and depth limit, canonical reconciliation, and pending-aware RPC methods and subscriptions."
 digest = "038ddb7c94"
 
+["crates/execution/grpc-exex/README.md"]
+summary = "base-grpc-exex: GrpcExExExtension, a BaseNodeExtension that mounts the gRPC ExEx and streams ExExNotification data to clients on node start. Use when changing ExEx streaming."
+digest = "4e897f20c7"
+
 ["crates/execution/metering/README.md"]
 summary = "Metering RPC: base_meterBundle, base_meterBlockByHash and base_meterBlockByNumber, plus the pseudo-opcode vocabulary for meteredOpcodes filters. Use to profile tx or block execution timing and gas."
 digest = "ff413936ff"
