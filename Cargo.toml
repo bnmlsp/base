@@ -410,7 +410,7 @@ reth-payload-builder-primitives = { git = "https://github.com/bnmlsp/reth.git", 
 reth-prune-types = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.8", default-features = false }
 reth-stages-types = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.8", default-features = false }
 reth-storage-errors = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.8", default-features = false }
-reth-remote-exex = { git = "https://github.com/bnmlsp/reth-remote-exex.git", branch = "feat-base-support", default-features = false }
+reth-remote-exex = { git = "https://github.com/bnmlsp/reth-remote-exex.git", tag = "for_reth_v2.5.2.8_base_support", default-features = false }
 reth-ethereum-forks = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.8", default-features = false }
 reth-consensus-common = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.8", default-features = false }
 reth-trie-parallel = { git = "https://github.com/bnmlsp/reth.git", branch = "dev-exex-internal-txs-base-v2.5.2.8" }
